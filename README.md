@@ -9,3 +9,16 @@ This is the official PyTorch implementation of our paper, coined [EEGDnet: Fusin
 conda env create -f environment.yml;
 pip install libmr==0.1.9
 ```
+## Citation
+If you find our codebase useful, please cite our paper:
+```
+@article{pu2022eegdnet,
+  title={EEGDnet: Fusing non-local and local self-similarity for EEG signal denoising with transformer},
+  author={Pu, Xiaorong and Yi, Peng and Chen, Kecheng and Ma, Zhaoqi and Zhao, Di and Ren, Yazhou},
+  journal={Computers in Biology and Medicine},
+  volume={151},
+  pages={106248},
+  year={2022},
+  publisher={Elsevier}
+}
+```
