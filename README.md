@@ -6,8 +6,7 @@ This is the official PyTorch implementation of our paper, coined [EEGDnet: Fusin
 
 ## Usage
 ```
-conda env create -f environment.yml;
-pip install libmr==0.1.9
+pip install torch
 ```
 ## Citation
 If you find our codebase useful, please cite our paper:
