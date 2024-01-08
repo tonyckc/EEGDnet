@@ -80,7 +80,7 @@ def train(denoiseNN, noiseEEG_train, EEG_train, noiseEEG_test, EEG_test, epochs)
 
                 pbar.update()
             pbar.close()
-        test_loss = test_loss / float(N_batch)
+        test_loss = test_loss / float(EEG_test.shape[0] / batch_size)
         writer.add_scalar('data/test_loss', test_loss, epoch)
 
         if best_test_loss > test_loss:
