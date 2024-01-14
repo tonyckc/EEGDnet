@@ -1,129 +1,117 @@
 import numpy as np
 import math
-# Author: Haoming Zhang
-#The code here not only include data importing, but also data standardization and the generation of analog noise signals
+"""
+Author: wolider wong
+Date: 2024-1-14
+Description: EEG, EOG, EMG data preprocessing to form the dataset for training
+cite: EEGDnet: Fusing non-local and local self-similarity for EEG signal denoising with transformer
+"""
+
+# Author: woldier wong
+# The code here not only include data importing, but also data standardization and the generation of analog noise signals
+
+def RMS(x: np.ndarray):
+    """
+    Root Mean Squared (RMS)
+
+    :param x: input
+    :return:
+    """
+    x2 = x ** 2  # x^2
+    sum_s2 = np.sum(x2, axis=-1, keepdims=True)  # sum
+    return (sum_s2 / x.shape[-1]) ** 0.5
 
 
-def get_rms(records):
-    return math.sqrt(sum([x ** 2 for x in records]) / len(records))
+def compute_noise_signal(x: np.ndarray, n: np.ndarray, snr: np.ndarray):
+    """
+    λ is a hyperparameter to control the signal-to-noise ratio (SNR) in the contaminated EEG signal y
+    SNR = 10 log( RMS(x) / RMS(λ · n) )
+
+    SNR = 10 log ( RMS(x) / ( λ · RMS(n) )  )
+
+    (SNR / 10 ) ** 10 = RMS(x) / ( λ · RMS(n) )
+
+    y = x + λ · n
+    :param x: noise-free signal
+    :param n: noise signal
+    :param snr:
+    :return:
+    """
+    lamda = RMS(x) / ((10 ** (snr / 10)) * RMS(n))
+    return x + lamda * n
 
 
-def random_signal(signal, combin_num):
-    # Random disturb and augment signal
-    random_result = []
+def normalize(x: np.ndarray, y: np.ndarray, mean_norm=False):
+    """
+    In order to facilitate the learning procedure, we normalized the input contaminated EEG segment and the ground-truth
+    EEG segment by dividing the standard deviation of contaminated EEG segment according to
+    x_bar = x / std(y)
+    y_bar = y / std(y)
+    :param x: noise-free signal
+    :param y: contaminated signal
+    :param mean_norm: bool , default false  . If true, will norm mean to 0
+    :return:
+    """
+    mean = y.mean() if mean_norm else 0
+    std = y.std(axis=-1, keepdims=True)
+    x_bar = (x - mean) / std
+    y_bar = (y - mean) / std
+    return x_bar, y_bar, std
 
-    for i in range(combin_num):
-        random_num = np.random.permutation(signal.shape[0])
-        shuffled_dataset = signal[random_num, :]
-        shuffled_dataset = shuffled_dataset.reshape(signal.shape[0], signal.shape[1])
-        random_result.append(shuffled_dataset)
-    
-    random_result = np.array(random_result)
 
-    return random_result
-        
-
-def data_prepare(EEG_all, noise_all, combin_num, train_num, test_num):
+def data_prepare(EEG_all: np.ndarray, noise_all: np.ndarray, combin_num: int, train_num: int, test_num: int):
     # The code here not only include data importing,
     # but also data standardization and the generation of analog noise signals
 
+    # First of all, if we just divide the data into training set and test set according to train_num,test_num,
+    # then the coverage of the samples in the training set and test set may not be comprehensive,
+    # because we should do a disruptive operation before dividing the data.
+
+    # a random seed to 109(this number can be chosen at random, the realization of the choice of 109 just to have a good feeling about the number),
+    # to ensure that each time the random result is the same
+    np.random.seed(109)
+    # disruptive element
+    # disorder the elements of an array
+    np.random.shuffle(EEG_all)
+    np.random.shuffle(noise_all)
+
+    # Get x, and n for the training and test sets
     eeg_train, eeg_test = EEG_all[0:train_num, :], EEG_all[train_num:train_num + test_num, :]
     noise_train, noise_test = noise_all[0:train_num, :], noise_all[train_num:train_num + test_num, :]
 
-    EEG_train = random_signal(eeg_train, combin_num).reshape(combin_num * eeg_train.shape[0], eeg_train.shape[1])
-    NOISE_train = random_signal(noise_train, combin_num).reshape(combin_num * noise_train.shape[0], noise_train.shape[1])
+    # Repeat the dataset combin_num times to accumulate noise of different intensities.
+    # shape [train_num * combin_num, L] , [test_num * combin_num, L]
+    eeg_train, eeg_test = np.repeat(eeg_train, combin_num, axis=0), np.repeat(eeg_test, combin_num, axis=0)
+    noise_train, noise_test = np.repeat(noise_train, combin_num, axis=0), np.repeat(noise_test, combin_num, axis=0)
 
-    # print(EEG_train.shape)
-    # print(NOISE_train.shape)
-    
     #################################  simulate noise signal of training set  ##############################
 
     # create random number between -7dB ~ 2dB
-    SNR_train_dB = np.random.uniform(-7, 2, (EEG_train.shape[0]))
+    snr_table = np.linspace(-7, -7 + combin_num, combin_num)  # a shape of [combin_num]
+    snr_table = snr_table.reshape((1, -1))  # reshape to [1, combin_num]
+    num_table = np.zeros((train_num, 1))  # reshape to [train_num, 1]
+    snr_table = snr_table + num_table  # broadcast to [train_num, combin_num]
+    snr_table = snr_table.reshape((-1, 1))  # match samples [train_num * combin_num, 1]
+    eeg_train_y = compute_noise_signal(eeg_train, noise_train, snr_table)
 
-    print("SNR_train_dB.shape" + str(SNR_train_dB.shape))
-    SNR_train = 10 ** (0.1 * (SNR_train_dB))
-
-    # combin eeg and noise for training set 
-    noiseEEG_train = []
-    NOISE_train_adjust = []
-    for i in range(EEG_train.shape[0]):
-        eeg = EEG_train[i].reshape(EEG_train.shape[1])
-        noise = NOISE_train[i].reshape(NOISE_train.shape[1])
-
-        coe = get_rms(eeg)/(get_rms(noise)*SNR_train[i])
-        noise = noise*coe
-        neeg = noise+eeg
-
-        NOISE_train_adjust.append(noise)
-        noiseEEG_train.append(neeg)
-
-    noiseEEG_train = np.array(noiseEEG_train)
-    NOISE_train_adjust = np.array(NOISE_train_adjust)
-
-    # variance for noisy EEG
-    EEG_train_end_standard = []
-    noiseEEG_train_end_standard = []
-
-    for i in range(noiseEEG_train.shape[0]):
-        # Each epochs divided by the standard deviation
-        eeg_train_all_std = EEG_train[i] / np.std(noiseEEG_train[i])
-        EEG_train_end_standard.append(eeg_train_all_std)
-
-        noiseeeg_train_end_standard = noiseEEG_train[i] / np.std(noiseEEG_train[i])
-        noiseEEG_train_end_standard.append(noiseeeg_train_end_standard)
-
-    noiseEEG_train_end_standard = np.array(noiseEEG_train_end_standard)
-    EEG_train_end_standard = np.array(EEG_train_end_standard)
+    # normalize
+    EEG_train_end_standard, noiseEEG_train_end_standard, EEG_trian_std = normalize(eeg_train, eeg_train_y)
 
     #################################  simulate noise signal of test  ##############################
-
-    SNR_test_dB = np.linspace(-7.0, 2.0, num=10)
-    SNR_test = 10 ** (0.1 * (SNR_test_dB))
-
-    eeg_test = np.array(eeg_test)
-    noise_test = np.array(noise_test)
-    
-    # combin eeg and noise for test set 
-    EEG_test = []
-    noise_EEG_test = []
-    for i in range(10):
-        noise_eeg_test = []
-        for j in range(eeg_test.shape[0]):
-            eeg = eeg_test[j]
-            noise = noise_test[j]
-            
-            coe = get_rms(eeg) / (get_rms(noise) * SNR_test[i])
-            noise = noise * coe
-            neeg = noise + eeg
-            
-            noise_eeg_test.append(neeg)
-        
-        EEG_test.extend(eeg_test)
-        noise_EEG_test.extend(noise_eeg_test)
-
-    noise_EEG_test = np.array(noise_EEG_test)
-    EEG_test = np.array(EEG_test)
-
-    # std for noisy EEG
-    EEG_test_end_standard = []
-    noiseEEG_test_end_standard = []
-    std_VALUE = []
-    for i in range(noise_EEG_test.shape[0]):
-        
-        # store std value to restore EEG signal
-        std_value = np.std(noise_EEG_test[i])
-        std_VALUE.append(std_value)
-
-        # Each epochs of eeg and neeg was divide by the standard deviation
-        eeg_test_all_std = EEG_test[i] / std_value
-        EEG_test_end_standard.append(eeg_test_all_std)
-
-        noiseeeg_test_end_standard = noise_EEG_test[i] / std_value
-        noiseEEG_test_end_standard.append(noiseeeg_test_end_standard)
-
-    std_VALUE = np.array(std_VALUE)
-    noiseEEG_test_end_standard = np.array(noiseEEG_test_end_standard)
-    EEG_test_end_standard = np.array(EEG_test_end_standard)
+    snr_table = np.linspace(-7, -7 + combin_num, combin_num)  # a shape of [combin_num]
+    snr_table = snr_table.reshape((1, -1))  # reshape to [1, combin_num]
+    num_table = np.zeros((test_num, 1))  # reshape to [test_num, 1]
+    snr_table = snr_table + num_table  # broadcast to [test_num, combin_num]
+    snr_table = snr_table.reshape((-1, 1))  # match samples [test_num * combin_num, 1]
+    eeg_test_y = compute_noise_signal(eeg_test, noise_test, snr_table)
+    EEG_test_end_standard, noiseEEG_test_end_standard, std_VALUE = normalize(eeg_test, eeg_test_y)
 
     return noiseEEG_train_end_standard, EEG_train_end_standard, noiseEEG_test_end_standard, EEG_test_end_standard, std_VALUE
+
+
+if __name__ == "__main__":
+    EEG_all = np.load('./data/EEG_all_epochs.npy')
+    noise_all = np.load('./data/EMG_all_epochs.npy')
+    noiseEEG_train, EEG_train, noiseEEG_test, EEG_test, test_std_VALUE = data_prepare(EEG_all, noise_all,
+                                                                                      10,
+                                                                                      4000, 100)
